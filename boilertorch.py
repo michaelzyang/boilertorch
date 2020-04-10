@@ -12,6 +12,10 @@ class TorchGadget():
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.epoch = 0
+        self.train_loss = None
+        self.train_metric = None
+        self.dev_loss = None
+        self.dev_metric = None
 
         if checkpoint:
             self.load_checkpoint(checkpoint)
@@ -105,8 +109,8 @@ class TorchGadget():
 
         return pred_labels
 
-    def train(self, train_loader, dev_loader, n_epochs, criterion, save_dir='./', save_freq=1,
-              report_freq=0, **kwargs):
+    def train(self, train_loader, dev_loader, n_epochs, criterion, save_dir='./', eval_train=False, eval_dev=True,
+              save_freq=1, report_freq=0, **kwargs):
         """
         Boiler plate training procedure, optionally saves the model checkpoint after every epoch
         :param train_loader: training set dataloader
@@ -118,14 +122,13 @@ class TorchGadget():
         """
         # Setup
         assert self.optimizer is not None, "Optimizer required for training. Set TorchGadget.optimizer"
+        if self.scheduler and not eval_train and not eval_dev:
+            print("Warning: Use of scheduler without evaluating either the training or validatation sets per epoch")
+            print("If scheduler is dynamic, it only compares training loss over one reporting cycle (may be unstable).")
 
         save_dir = self.check_save_dir(save_dir)
         if save_dir[-1] != '/':
             save_dir = save_dir + '/'
-
-        if not hasattr(self, 'dev_loss') or not hasattr(self, 'dev_metric'):
-            self.dev_loss = []
-            self.dev_metric = []
 
         self.model.to(self.device)
         criterion.to(self.device)
@@ -135,11 +138,23 @@ class TorchGadget():
         print(f"Beginning training at {datetime.now()}")
         if self.epoch == 0:
             with open(save_dir + "results.txt", mode='a') as f:
-                f.write("epoch,dev_loss,dev_metric\n")
+                header = "epoch"
+                if eval_train:
+                    header = header + ",train_loss,train_metric"
+                if eval_dev:
+                    header = header + ",dev_loss,dev_metric"
+                f.write(header + "\n")
 
         # Train epochs
         self.model.train()
         for epoch in range(self.epoch + 1, n_epochs + 1):
+            if epoch == 1 or (eval_train and self.train_loss is None or self.train_metric is None):
+                self.train_loss = []
+                self.train_metric = []
+            if epoch == 1 or (eval_dev and self.dev_loss is None or self.dev_metric is None):
+                self.dev_loss = []
+                self.dev_metric = []
+
             avg_loss = 0.0  # Accumulate loss over subsets of batches for reporting
             for i, batch in enumerate(train_loader):
                 batch_num = i + 1
@@ -162,21 +177,38 @@ class TorchGadget():
                 torch.cuda.empty_cache()
 
             # Evaluate epoch
-            epoch_dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
-            epoch_dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
-            self.dev_loss.append(epoch_dev_loss)
-            self.dev_metric.append(epoch_dev_metric)
+            if eval_dev:
+                epoch_dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
+                epoch_dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
+                self.dev_loss.append(epoch_dev_loss)
+                self.dev_metric.append(epoch_dev_metric)
+            if eval_train:
+                epoch_train_loss = self.eval_set(train_loader, self.compute_loss, criterion=criterion)
+                epoch_train_metric = self.eval_set(train_loader, self.compute_metric, **kwargs)
+                self.train_loss.append(epoch_train_loss)
+                self.train_metric.append(epoch_train_metric)
             with open(save_dir + "results.txt", mode='a') as f:
-                f.write(f"{epoch},{epoch_dev_loss},{epoch_dev_metric}\n")
+                line = str(epoch)
+                if eval_train:
+                    line = line + f",{epoch_train_loss},{epoch_train_metric}"
+                if eval_dev:
+                    line = line + f",{epoch_dev_loss},{epoch_dev_metric}"
+                f.write(line + "\n")
 
             if self.scheduler:
-                self.scheduler.step(epoch_dev_loss)
+                if eval_dev:
+                    self.try_sched_step(epoch_dev_loss)
+                elif eval_train:
+                    self.try_sched_step(epoch_train_loss)
+                else:
+                    self.try_sched_step(avg_loss)
 
             if save_freq and epoch % save_freq == 0:
                 checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
+                    'scheduler_state_dict': getattr(self.scheduler, 'state_dict', lambda: None)(),
                     'dev_loss': self.dev_loss,
                     'dev_metric': self.dev_metric
                 }
@@ -265,6 +297,10 @@ class TorchGadget():
                 self.model.load_state_dict(checkpoint['model_state_dict'])
                 if self.optimizer:
                     self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                try:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                except (AttributeError, KeyError):
+                    pass
                 self.epoch = checkpoint['epoch']
                 if 'dev_loss' in checkpoint:
                     self.dev_loss = checkpoint['dev_loss']
@@ -275,6 +311,12 @@ class TorchGadget():
                 print(f"Provided checkpoint path {checkpoint_path} not found. Path must include the filename itself.")
                 checkpoint_path = input("Provide a new path, or [init] to use randomized weights: ")
 
+
+    def try_sched_step(self, metrics):
+        try:
+            self.scheduler.step(metrics=metrics)
+        except TypeError:
+            self.scheduler.step()
 
     def check_save_dir(self, save_dir):
         """Checks that the provided save directory exists and warns the user if it is not empty"""
