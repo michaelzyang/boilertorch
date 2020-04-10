@@ -123,11 +123,14 @@ class TorchGadget():
         if save_dir[-1] != '/':
             save_dir = save_dir + '/'
 
+        if not hasattr(self, 'dev_loss') or not hasattr(self, 'dev_metric'):
+            self.dev_loss = []
+            self.dev_metric = []
+
         self.model.to(self.device)
         criterion.to(self.device)
 
-        batch_group_size = int(
-            len(train_loader) / report_freq) if report_freq else 0  # print status every batch_group_size
+        batch_group_size = int(len(train_loader) / report_freq) if report_freq else 0  # report every batch_group_size
 
         print(f"Beginning training at {datetime.now()}")
         if self.epoch == 0:
@@ -151,8 +154,7 @@ class TorchGadget():
                 # Accumulate loss for reporting
                 avg_loss += loss.item()
                 if batch_group_size and (batch_num) % batch_group_size == 0:
-                    print(
-                        f'Epoch {epoch}, Batch {batch_num}\tTrain loss: {avg_loss / batch_group_size:.4f}\t{datetime.now()}')
+                    print(f'Epoch {epoch}, Batch {batch_num}\tTrain loss: {avg_loss / batch_group_size:.4f}\t{datetime.now()}')
                     avg_loss = 0.0
 
                 # Cleanup
@@ -160,25 +162,27 @@ class TorchGadget():
                 torch.cuda.empty_cache()
 
             # Evaluate epoch
-            dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
-            dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
+            epoch_dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
+            epoch_dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
+            self.dev_loss.append(epoch_dev_loss)
+            self.dev_metric.append(epoch_dev_metric)
             with open(save_dir + "results.txt", mode='a') as f:
-                f.write(f"{epoch},{dev_loss},{dev_metric}\n")
+                f.write(f"{epoch},{epoch_dev_loss},{epoch_dev_metric}\n")
 
             if self.scheduler:
-                self.scheduler.step(dev_loss)
+                self.scheduler.step(epoch_dev_loss)
 
             if save_freq and epoch % save_freq == 0:
                 checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
-                    'dev_loss': dev_loss,
-                    'dev_metric': dev_metric
+                    'dev_loss': self.dev_loss,
+                    'dev_metric': self.dev_metric
                 }
-                torch.save(checkpoint, save_dir + f"checkpoint_{epoch}_{dev_metric:.4f}.pth")
+                torch.save(checkpoint, save_dir + f"checkpoint_{epoch}_{epoch_dev_metric:.4f}.pth")
 
-            print(f'Epoch {epoch} complete.\tDev loss: {dev_loss:.4f}\tDev metric: {dev_metric:.4f}\t{datetime.now()}')
+            print(f'Epoch {epoch} complete.\tDev loss: {epoch_dev_loss:.4f}\tDev metric: {epoch_dev_metric:.4f}\t{datetime.now()}')
         print(f"Finished training at {datetime.now()}")
 
     def eval_set(self, data_loader, compute_fn, **kwargs):
@@ -262,6 +266,10 @@ class TorchGadget():
                 if self.optimizer:
                     self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 self.epoch = checkpoint['epoch']
+                if 'dev_loss' in checkpoint:
+                    self.dev_loss = checkpoint['dev_loss']
+                if 'dev_metric' in checkpoint:
+                    self.dev_metric = checkpoint['dev_metric']
                 done = True
             except FileNotFoundError:
                 print(f"Provided checkpoint path {checkpoint_path} not found. Path must include the filename itself.")
@@ -272,6 +280,10 @@ class TorchGadget():
         """Checks that the provided save directory exists and warns the user if it is not empty"""
         done = False
         while not done:
+            if save_dir == 'exit':
+                print("Exiting")
+                sys.exit(0)
+
             #  Make sure save_dir exists
             if not os.path.exists(save_dir):
                 print(f"Save directory {save_dir} does not exist.")
@@ -293,13 +305,23 @@ class TorchGadget():
             #  Ensure user knows if save_dir is not empty
             if os.listdir(save_dir):
                 use_save_dir = input(
-                    f"Save directory {save_dir} is not empty. Are you sure you want to continue? [y/n] ")
+                    f"Save directory {save_dir} is not empty. Do you want to overwrite it? [y/n] ")
                 if use_save_dir == 'n':
                     save_dir = input("Enter new save directory (or [exit] to exit): ")
                 elif use_save_dir == 'y':
-                    done = True
+                    sure = input(f"Are you sure you want to overwrite the directory {save_dir}? [y/n] ")
+                    if sure == 'y':
+                        import shutil
+                        assert save_dir != '~/' and save_dir != '~'
+                        shutil.rmtree(save_dir)
+                        os.makedirs(save_dir)
+                        done = True
+                    elif sure != 'n':
+                        print("Please enter one of [y/n]")
                 else:
                     print("Please enter one of [y/n]")
+            else:
+                done = True
 
         return save_dir
 
