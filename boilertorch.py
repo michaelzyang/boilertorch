@@ -135,6 +135,11 @@ class TorchGadget():
 
         batch_group_size = int(len(train_loader) / report_freq) if report_freq else 0  # report every batch_group_size
 
+        print(f"Training set batches: {len(train_loader)}\tBatch size: {train_loader.batch_size}.")
+        if dev_loader:
+            print(f"Development set batches: {len(dev_loader)}\tBatch size: {dev_loader.batch_size}.")
+        else:
+            print("No development set provided")
         print(f"Beginning training at {datetime.now()}")
         if self.epoch == 0:
             with open(save_dir + "results.txt", mode='a') as f:
@@ -210,12 +215,20 @@ class TorchGadget():
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'scheduler_state_dict': getattr(self.scheduler, 'state_dict', lambda: None)(),
+                    'train_loss': self.train_loss,
+                    'train_metric': self.train_metric,
                     'dev_loss': self.dev_loss,
                     'dev_metric': self.dev_metric
                 }
                 torch.save(checkpoint, save_dir + f"checkpoint_{epoch}_{epoch_dev_metric:.4f}.pth")
 
-            print(f'Epoch {epoch} complete.\tDev loss: {epoch_dev_loss:.4f}\tDev metric: {epoch_dev_metric:.4f}\t{datetime.now()}')
+            # Print epoch log
+            epoch_log = f'Epoch {epoch} complete.'
+            if eval_train:
+                epoch_log = epoch_log + f"\tTrain loss: {epoch_train_loss:.4f}\tTrain metric: {epoch_train_metric:.4f}"
+            if dev_loader:
+                epoch_log = epoch_log + f"\tDev loss: {epoch_dev_loss:.4f}\tDev metric: {epoch_dev_metric:.4f}"
+            print(f'{epoch_log}\t{datetime.now()}')
         print(f"Finished training at {datetime.now()}")
 
     def eval_set(self, data_loader, compute_fn, **kwargs):
