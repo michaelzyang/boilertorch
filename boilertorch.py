@@ -109,8 +109,8 @@ class TorchGadget():
 
         return pred_labels
 
-    def train(self, train_loader, dev_loader, n_epochs, criterion, save_dir='./', eval_train=False, eval_dev=True,
-              save_freq=1, report_freq=0, **kwargs):
+    def train(self, train_loader, n_epochs, criterion, eval_train=False, dev_loader=None,
+              save_dir='./', save_freq=1, report_freq=0, **kwargs):
         """
         Boiler plate training procedure, optionally saves the model checkpoint after every epoch
         :param train_loader: training set dataloader
@@ -122,7 +122,7 @@ class TorchGadget():
         """
         # Setup
         assert self.optimizer is not None, "Optimizer required for training. Set TorchGadget.optimizer"
-        if self.scheduler and not eval_train and not eval_dev:
+        if self.scheduler and not eval_train and not dev_loader:
             print("Warning: Use of scheduler without evaluating either the training or validatation sets per epoch")
             print("If scheduler is dynamic, it only compares training loss over one reporting cycle (may be unstable).")
 
@@ -141,20 +141,21 @@ class TorchGadget():
                 header = "epoch"
                 if eval_train:
                     header = header + ",train_loss,train_metric"
-                if eval_dev:
+                if dev_loader:
                     header = header + ",dev_loss,dev_metric"
                 f.write(header + "\n")
 
-        # Train epochs
+        # Train
         self.model.train()
         for epoch in range(self.epoch + 1, n_epochs + 1):
-            if epoch == 1 or (eval_train and self.train_loss is None or self.train_metric is None):
+            if epoch == 1 or (eval_train and (self.train_loss is None or self.train_metric is None)):
                 self.train_loss = []
                 self.train_metric = []
-            if epoch == 1 or (eval_dev and self.dev_loss is None or self.dev_metric is None):
+            if epoch == 1 or (dev_loader and (self.dev_loss is None or self.dev_metric is None)):
                 self.dev_loss = []
                 self.dev_metric = []
 
+            # Train over epoch
             avg_loss = 0.0  # Accumulate loss over subsets of batches for reporting
             for i, batch in enumerate(train_loader):
                 batch_num = i + 1
@@ -177,32 +178,32 @@ class TorchGadget():
                 torch.cuda.empty_cache()
 
             # Evaluate epoch
-            if eval_dev:
-                epoch_dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
-                epoch_dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
-                self.dev_loss.append(epoch_dev_loss)
-                self.dev_metric.append(epoch_dev_metric)
-            if eval_train:
-                epoch_train_loss = self.eval_set(train_loader, self.compute_loss, criterion=criterion)
-                epoch_train_metric = self.eval_set(train_loader, self.compute_metric, **kwargs)
-                self.train_loss.append(epoch_train_loss)
-                self.train_metric.append(epoch_train_metric)
             with open(save_dir + "results.txt", mode='a') as f:
                 line = str(epoch)
                 if eval_train:
+                    epoch_train_loss = self.eval_set(train_loader, self.compute_loss, criterion=criterion)
+                    epoch_train_metric = self.eval_set(train_loader, self.compute_metric, **kwargs)
+                    self.train_loss.append(epoch_train_loss)
+                    self.train_metric.append(epoch_train_metric)
                     line = line + f",{epoch_train_loss},{epoch_train_metric}"
-                if eval_dev:
+                if dev_loader:
+                    epoch_dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
+                    epoch_dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
+                    self.dev_loss.append(epoch_dev_loss)
+                    self.dev_metric.append(epoch_dev_metric)
                     line = line + f",{epoch_dev_loss},{epoch_dev_metric}"
                 f.write(line + "\n")
 
+            # Step scheduler
             if self.scheduler:
-                if eval_dev:
+                if dev_loader:
                     self.try_sched_step(epoch_dev_loss)
                 elif eval_train:
                     self.try_sched_step(epoch_train_loss)
                 else:
                     self.try_sched_step(avg_loss)
 
+            # Save checkpoint
             if save_freq and epoch % save_freq == 0:
                 checkpoint = {
                     'epoch': epoch,
