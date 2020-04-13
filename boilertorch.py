@@ -27,12 +27,20 @@ class TorchGadget():
         str_joins.append(str(self.optimizer) if self.optimizer else "No optimizer provided.")
         str_joins.append(str(self.scheduler) if self.scheduler else "No scheduler provided.")
         str_joins.append(f"Epoch: {self.epoch}")
+        if self.train_loss:
+            str_joins.append(f"Train loss: {self.train_loss}")
+        if self.train_metric:
+            str_joins.append(f"Train metric: {self.train_metric}")
+        if self.dev_loss:
+            str_joins.append(f"Development loss: {self.dev_loss}")
+        if self.dev_metric:
+            str_joins.append(f"Development metric: {self.dev_metric}")
         return '\n'.join(str_joins)
 
-    def compute_loss(self, batch, criterion):
+    def get_batch_outputs(self, batch):
         """
         CUSTOMIZABLE FUNCTION
-        Computes the average loss over a batch of data for a given criterion (loss function).
+        Takes a batch and runs it through the model's forward method to get outputs.
         Overload this function appropriately with your Dataset class's output and model forward function signature
         """
         # Unpack batch
@@ -41,73 +49,74 @@ class TorchGadget():
 
         # Compute loss
         outputs = self.model(x)
-        loss = criterion(outputs, y)
 
         # Clean up
-        del x, y, outputs
+        del x
+        # no need to del batch (deleted in the calling function)
+        torch.cuda.empty_cache()
+
+        return outputs, y
+
+    def get_batch_predictions(self, batch, **kwargs):
+        """
+        CUSTOMIZABLE FUNCTION
+        Takes a batch and generates predictions from the model e.g. class labels for classification models
+        Overload this function appropriately with your Dataset class's output and model generation function signature
+        """
+        # Unpack batch
+        x, y = batch
+        x, y = x.to(self.device), y.to(self.device)
+
+        # Generate predictions
+        outputs = self.model(x)
+        _, pred_labels = torch.max(F.softmax(outputs, dim=1), 1)
+        pred_labels = pred_labels.view(-1)
+
+        # Clean up
+        del x, outputs
+        # no need to del batch (deleted in the calling function)
+        torch.cuda.empty_cache()
+
+        return pred_labels, y
+
+    def compute_batch_loss(self, batch, criterion):
+        """
+        CUSTOMIZABLE FUNCTION
+        Computes the average loss over a batch of data for a given criterion (loss function).
+        Overload this function appropriately with your Dataset class's output and model forward function signature
+        """
+        outputs, target = self.get_batch_outputs(batch)
+        loss = criterion(outputs, target)
+
+        # Clean up
+        del outputs, target
         # no need to del batch (deleted in the calling function)
         torch.cuda.empty_cache()
 
         return loss
 
-    def compute_metric(self, batch, **kwargs):
+    def compute_batch_metric(self, batch, **kwargs):
         """
         CUSTOMIZABLE FUNCTION
         Computes the average evaluation metric over a batch of data for a given criterion (loss function).
         Overload this function appropriately with your Dataset class's output and model forward or inference function
         signature
         """
-        # Unpack batch
-        x, y = batch
-        x, y = x.to(self.device), y.to(self.device)
-
-        # Compute accuracy
-        outputs = self.model(x)  # can be changed to any generative method, with optional kwargs
-        # outputs = outputs.detach().to('cpu')
-        metric = self._accuracy(outputs, y)  # can be changed to any evaluation metric, with optional kwargs
+        predictions, target = self.get_batch_predictions(batch)
+        metric = self._accuracy(predictions, target)  # can be changed to any evaluation metric, with optional kwargs
 
         # Clean up
-        del x, y, outputs
+        del predictions, target
         # no need to del batch (deleted in the calling function)
         torch.cuda.empty_cache()
 
         return metric
 
-
-    def _accuracy(self, outputs, labels):
-        """Mean accuracy over a batch, given labels and logit outputs"""
+    def _accuracy(self, pred_labels, labels):
+        """Mean accuracy over predicted and true labels"""
         batch_size = len(labels)
-        _, pred_labels = torch.max(F.softmax(outputs, dim=1), 1)
-        pred_labels = pred_labels.view(-1)
         accuracy = torch.sum(torch.eq(pred_labels, labels)).item() / batch_size
-
-        # Clean up
-        del pred_labels
-
         return accuracy
-
-    def compute_predictions(self, batch, **kwargs):
-        """
-        CUSTOMIZABLE FUNCTION
-        Generates predictions for evaluation over a batch of data.
-        Overload this function appropriately with your Dataset class's output and model forward or inference function
-        signature
-        :return: default supported output types are torch.Tensor, np.ndarray or list
-        """
-        # Unpack batch
-        x = batch[0]
-
-        # Compute prediction
-        outputs = self.model(x)  # can be changed to any generative method, with optional kwargs
-        _, pred_labels = torch.max(F.softmax(outputs, dim=1), 1)
-        pred_labels = pred_labels.view(-1)
-
-        # Clean up
-        del x, outputs
-        # no need to del batch or pred_labels (deleted in the calling function)
-        torch.cuda.empty_cache()
-
-        return pred_labels
 
     def train(self, train_loader, n_epochs, criterion, eval_train=False, dev_loader=None,
               save_dir='./', save_freq=1, report_freq=0, **kwargs):
@@ -120,7 +129,7 @@ class TorchGadget():
         :param save_dir: the save directory
         :param report_freq: report training approx report_freq times per epoch
         """
-        # Setup
+        # Check config
         assert self.optimizer is not None, "Optimizer required for training. Set TorchGadget.optimizer"
         if self.scheduler and not eval_train and not dev_loader:
             print("Warning: Use of scheduler without evaluating either the training or validatation sets per epoch")
@@ -133,13 +142,13 @@ class TorchGadget():
         self.model.to(self.device)
         criterion.to(self.device)
 
+
+        # Prepare to begin training
         batch_group_size = int(len(train_loader) / report_freq) if report_freq else 0  # report every batch_group_size
 
         print(f"Training set batches: {len(train_loader)}\tBatch size: {train_loader.batch_size}.")
-        if dev_loader:
-            print(f"Development set batches: {len(dev_loader)}\tBatch size: {dev_loader.batch_size}.")
-        else:
-            print("No development set provided")
+        print(f"Development set batches: {len(dev_loader)}\tBatch size: {dev_loader.batch_size}." if dev_loader \
+              else "No development set provided")
         print(f"Beginning training at {datetime.now()}")
         if self.epoch == 0:
             with open(save_dir + "results.txt", mode='a') as f:
@@ -150,16 +159,17 @@ class TorchGadget():
                     header = header + ",dev_loss,dev_metric"
                 f.write(header + "\n")
 
+        if self.epoch == 0 or (eval_train and (self.train_loss is None or self.train_metric is None)):
+            self.train_loss = []
+            self.train_metric = []
+        if self.epoch == 0 or (dev_loader and (self.dev_loss is None or self.dev_metric is None)):
+            self.dev_loss = []
+            self.dev_metric = []
+
+
         # Train
         self.model.train()
         for epoch in range(self.epoch + 1, n_epochs + 1):
-            if epoch == 1 or (eval_train and (self.train_loss is None or self.train_metric is None)):
-                self.train_loss = []
-                self.train_metric = []
-            if epoch == 1 or (dev_loader and (self.dev_loss is None or self.dev_metric is None)):
-                self.dev_loss = []
-                self.dev_metric = []
-
             # Train over epoch
             avg_loss = 0.0  # Accumulate loss over subsets of batches for reporting
             for i, batch in enumerate(train_loader):
@@ -185,13 +195,13 @@ class TorchGadget():
             # Evaluate epoch
             with open(save_dir + "results.txt", mode='a') as f:
                 line = str(epoch)
-                if eval_train:
+                if eval_train:  # evaluate over training set
                     epoch_train_loss = self.eval_set(train_loader, self.compute_loss, criterion=criterion)
                     epoch_train_metric = self.eval_set(train_loader, self.compute_metric, **kwargs)
                     self.train_loss.append(epoch_train_loss)
                     self.train_metric.append(epoch_train_metric)
                     line = line + f",{epoch_train_loss},{epoch_train_metric}"
-                if dev_loader:
+                if dev_loader:  # evaluate over development set
                     epoch_dev_loss = self.eval_set(dev_loader, self.compute_loss, criterion=criterion)
                     epoch_dev_metric = self.eval_set(dev_loader, self.compute_metric, **kwargs)
                     self.dev_loss.append(epoch_dev_loss)
@@ -229,6 +239,7 @@ class TorchGadget():
             if dev_loader:
                 epoch_log = epoch_log + f"\tDev loss: {epoch_dev_loss:.4f}\tDev metric: {epoch_dev_metric:.4f}"
             print(f'{epoch_log}\t{datetime.now()}')
+
         print(f"Finished training at {datetime.now()}")
 
     def eval_set(self, data_loader, compute_fn, **kwargs):
@@ -268,15 +279,16 @@ class TorchGadget():
         Generates the predictions of the model on a given dataset
         :param data_loader: A dataloader for the data over which to evaluate
         :param kwargs: any kwargs required for prediction
-        :return: Concatenated predictions of the same type as returned by self.compute_predictions
+        :return: Concatenated predictions of the same type as returned by self.get_batch_predictions
         """
         self.model.eval()
         accum = []
 
         with torch.no_grad():
             for i, batch in enumerate(data_loader):
-                pred_labels = self.compute_predictions(batch, **kwargs)
-                accum.extend(pred_labels)
+                predictions_batch, _ = self.get_batch_predictions(batch, **kwargs)
+                # predictions_batch = outputs.detach().to('cpu')
+                accum.extend(predictions_batch)
 
                 # Clean up
                 del batch
@@ -284,19 +296,19 @@ class TorchGadget():
 
         self.model.train()
 
-        if isinstance(pred_labels, list):
-            predictions = accum
-        elif isinstance(pred_labels, torch.Tensor):
-            predictions = torch.cat(accum)
-        elif isinstance(pred_labels, np.ndarray):
-            predictions = np.concatenate(accum)
+        if isinstance(predictions_batch, list):
+            predictions_set = accum
+        elif isinstance(predictions_batch, torch.Tensor):
+            predictions_set = torch.cat(accum)
+        elif isinstance(predictions_batch, np.ndarray):
+            predictions_set = np.concatenate(accum)
         else:
-            raise NotImplementedError("Unsupported output type: ", type(pred_labels))
+            raise NotImplementedError("Unsupported output type: ", type(predictions_batch))
 
-        del pred_labels
+        del predictions_batch
         torch.cuda.empty_cache()
 
-        return predictions
+        return predictions_set
 
     def load_checkpoint(self, checkpoint_path=''):
         """Loads a checkpoint for the model, epoch number and optimizer if provided"""
@@ -327,6 +339,10 @@ class TorchGadget():
 
 
     def try_sched_step(self, metrics):
+        """
+        Steps the scheduler
+        First tries to step with the metric in case the scheduler is dynamic, then falls back to a step without args.
+        """
         try:
             self.scheduler.step(metrics=metrics)
         except TypeError:
