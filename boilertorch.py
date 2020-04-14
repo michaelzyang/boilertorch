@@ -37,7 +37,7 @@ class TorchGadget():
             str_joins.append(f"Development metric: {self.dev_metric}")
         return '\n'.join(str_joins)
 
-    def get_batch_outputs(self, batch):
+    def get_outputs(self, batch):
         """
         CUSTOMIZABLE FUNCTION
         Takes a batch and runs it through the model's forward method to get outputs.
@@ -57,7 +57,7 @@ class TorchGadget():
 
         return outputs, y
 
-    def get_batch_predictions(self, batch, **kwargs):
+    def get_predictions(self, batch, **kwargs):
         """
         CUSTOMIZABLE FUNCTION
         Takes a batch and generates predictions from the model e.g. class labels for classification models
@@ -79,13 +79,13 @@ class TorchGadget():
 
         return pred_labels, y
 
-    def compute_batch_loss(self, batch, criterion):
+    def compute_loss(self, batch, criterion):
         """
         CUSTOMIZABLE FUNCTION
         Computes the average loss over a batch of data for a given criterion (loss function).
         Overload this function appropriately with your Dataset class's output and model forward function signature
         """
-        outputs, target = self.get_batch_outputs(batch)
+        outputs, target = self.get_outputs(batch)
         loss = criterion(outputs, target)
 
         # Clean up
@@ -95,14 +95,14 @@ class TorchGadget():
 
         return loss
 
-    def compute_batch_metric(self, batch, **kwargs):
+    def compute_metric(self, batch, **kwargs):
         """
         CUSTOMIZABLE FUNCTION
         Computes the average evaluation metric over a batch of data for a given criterion (loss function).
         Overload this function appropriately with your Dataset class's output and model forward or inference function
         signature
         """
-        predictions, target = self.get_batch_predictions(batch)
+        predictions, target = self.get_predictions(batch)
         metric = self._accuracy(predictions, target)  # can be changed to any evaluation metric, with optional kwargs
 
         # Clean up
@@ -242,15 +242,17 @@ class TorchGadget():
 
         print(f"Finished training at {datetime.now()}")
 
-    def eval_set(self, data_loader, compute_fn, **kwargs):
+    def eval_set(self, data_loader, compute_fn=None, **kwargs):
         """
         BOILERPLATE FUNCTION
-        Evaluates the average loss or evaluation metric of the model on a given dataset
+        Evaluates the average evaluation metric (or other metric such as loss) of the model on a given dataset
         :param data_loader: A dataloader for the data over which to evaluate
-        :param compute_fn: Either the compute_loss or compute_metric method
+        :param compute_fn: set to the compute_metric method by default (can be set to compute_loss method or any other)
         :param kwargs: either The criterion for compute_loss or other kwargs for compute_metric
         :return: The average loss or metric per sentence
         """
+        if compute_fn is None:
+            compute_fn = self.compute_metric
         self.model.eval()
         accum = 0.0
         batch_count = 0.0
@@ -280,14 +282,14 @@ class TorchGadget():
         Generates the predictions of the model on a given dataset
         :param data_loader: A dataloader for the data over which to evaluate
         :param kwargs: any kwargs required for prediction
-        :return: Concatenated predictions of the same type as returned by self.get_batch_predictions
+        :return: Concatenated predictions of the same type as returned by self.get_predictions
         """
         self.model.eval()
         accum = []
 
         with torch.no_grad():
             for i, batch in enumerate(data_loader):
-                predictions_batch, _ = self.get_batch_predictions(batch, **kwargs)
+                predictions_batch, _ = self.get_predictions(batch, **kwargs)
                 # predictions_batch = outputs.detach().to('cpu')
                 accum.extend(predictions_batch)
 

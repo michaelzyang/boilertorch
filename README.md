@@ -21,7 +21,7 @@ You can focus on the fun part!
 - Write your own PyTorch `nn.Module` model class and initialize the model parameters yourself
 - Write your own `torch.utils.data.Dataset` class. (When instantiating blind test data without given target outputs, use dummy outputs instead.)
 - Batch your data using `torch.utils.data.Dataloader` 
-- Extend the `TorchGadget` class with custom code if your model is not a binary or multi-class classification model
+- Extend the `TorchGadget` class with custom code if your model is not a classification model
 
 We take care of the rest!
 - Instantiate a `TorchGadget` object
@@ -46,10 +46,9 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, ...)  # option
 checkpt_path = 'path/checkpt.pt'  # optional
 
 gadget = TorchGagdet(model, optimizer, scheduler, checkpoint=checkpt_path)
-
 gadget.train(criterion, train_loader, dev_loader, n_epochs=50, save_dir='./')
-
-test_idxs = gadget.predict_set(test_loader)
+dev_accuracy = gadget.eval_set(dev_loader)  # evaluate accuracy over the dev set
+predictions = gadget.predict_set(test_loader)  # predict labels for the test set
 
 ```
 
@@ -59,7 +58,7 @@ test_idxs = gadget.predict_set(test_loader)
 ```
 outputs = self.model(x)
 ```
-- If your model's forward function does not follow this signature, overload or edit the `TorchGagdet.get_batch_outputs` method to put a batch from the Dataloader through your model's forward function.
+- If your model's forward function does not follow this signature, overload or edit the `TorchGagdet.get_outputs` method to put a batch from the Dataloader through your model's forward function.
 
 
 ### Customizing training criterion / loss function
@@ -68,9 +67,9 @@ outputs = self.model(x)
 loss = criterion(outputs, target)
 ```
 Most loss functions already follow this signature e.g. `nn.CrossEntropyLoss`, `nn.MSELoss`, `nn.NLLLoss`, `nn.L1Loss`
-- If your criterion does not follow this signature (e.g. `nn.CTCLoss`), overload or edit the `TorchGagdet.compute_batch_loss` method to put outputs from your model and the targets into the criterion.
+- If your criterion does not follow this signature (e.g. `nn.CTCLoss`), overload or edit the `TorchGagdet.compute_loss` method to put outputs from your model and the targets into the criterion.
 
 
 ### Customizing model prediction and evaluation metric
-- If your model is not a binary or multi-class classification model that outputs softmax logits, overload or edit the `TorchGagdet.get_batch_predictions` method to put a batch from the Dataloader through your model and generate predictions. `Torchgadget` uses this for both evaluation and blind prediction. For blind prediction, `TorchGagdet.predict_set` will take care of concatenating the outputs of the batches for you if your `TorchGagdet.get_batch_predictions` method returns the predictions as a `torch.Tensor`, `numpy.ndarray` or Python `list`.
-- If your evaluation metric is not classification accuracy, overload or edit the `TorchGagdet.compute_batch_metric` method to compute your evaluation metric with the outputs or predictions from your model and the targets.
+- If your model is not a binary or multi-class classification model that outputs softmax logits, overload or edit the `TorchGagdet.get_predictions` method to put a batch from the Dataloader through your model and generate predictions. `Torchgadget` uses this for both evaluation and blind prediction. For blind prediction, `TorchGagdet.predict_set` will take care of concatenating the outputs of the batches for you if your `TorchGagdet.get_predictions` method returns the predictions as a `torch.Tensor`, `numpy.ndarray` or Python `list`.
+- If your evaluation metric is not classification accuracy, overload or edit the `TorchGagdet.compute_metric` method to compute your evaluation metric with the outputs or predictions from your model and the targets.
