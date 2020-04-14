@@ -118,7 +118,7 @@ class TorchGadget():
         accuracy = torch.sum(torch.eq(pred_labels, labels)).item() / batch_size
         return accuracy
 
-    def train(self, train_loader, n_epochs, criterion, eval_train=False, dev_loader=None,
+    def train(self, criterion, train_loader, dev_loader=None, eval_train=False, n_epochs=1000,
               save_dir='./', save_freq=1, report_freq=0, **kwargs):
         """
         Boiler plate training procedure, optionally saves the model checkpoint after every epoch
@@ -132,7 +132,7 @@ class TorchGadget():
         # Check config
         assert self.optimizer is not None, "Optimizer required for training. Set TorchGadget.optimizer"
         if self.scheduler and not eval_train and not dev_loader:
-            print("Warning: Use of scheduler without evaluating either the training or validatation sets per epoch")
+            print("Warning: Use of scheduler without evaluating either the training or validation sets per epoch")
             print("If scheduler is dynamic, it only compares training loss over one reporting cycle (may be unstable).")
 
         save_dir = self.check_save_dir(save_dir)
@@ -257,13 +257,14 @@ class TorchGadget():
 
         with torch.no_grad():
             for i, batch in enumerate(data_loader):
-                num_data_points = batch[0].shape[0]
+                num_data_points = len(batch)
                 if i == 0:
                     batch_size = num_data_points  # assumes batch first ordering
 
                 # Accumulate
-                accum += compute_fn(batch, **kwargs)
-                batch_count += num_data_points / batch_size  # last batch may be smaller than batch_size
+                batch_fraction = num_data_points / batch_size  # last batch may be smaller than batch_size
+                batch_count += batch_fraction
+                accum += batch_fraction * compute_fn(batch, **kwargs)
 
                 # Clean up
                 del batch
