@@ -1,7 +1,26 @@
-import os, sys
+"""
+Copyright 2020 Michael Yang
+
+The MIT License(MIT)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"""
+import os
+import sys
 import numpy as np
 import torch
-import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from datetime import datetime
 
 class TorchGadget():
@@ -20,6 +39,7 @@ class TorchGadget():
         if checkpoint:
             self.load_checkpoint(checkpoint)
 
+
     def __repr__(self):
         str_joins = []
         str_joins.append(f"Device: {self.device}")
@@ -37,86 +57,43 @@ class TorchGadget():
             str_joins.append(f"Development metric: {self.dev_metric}")
         return '\n'.join(str_joins)
 
+
     def get_outputs(self, batch):
         """
-        CUSTOMIZABLE FUNCTION
-        Takes a batch and runs it through the model's forward method to get outputs.
-        Overload this function appropriately with your Dataset class's output and model forward function signature
+        CUSTOMIZABLE FUNCTION - used as a helper function for compute_loss
+        Unpacks a batch of data and runs it through the model's forward method to get outputs.
+        Overload this function appropriately with your Dataset class's output and model forward function signature.
         """
-        # Unpack batch
-        x, y = batch
-        x, y = x.to(self.device), y.to(self.device)
+        raise NotImplementedError
 
-        # Compute loss
-        outputs = self.model(x)
-
-        # Clean up
-        del x
-        # no need to del batch (deleted in the calling function)
-        torch.cuda.empty_cache()
-
-        return outputs, y
 
     def get_predictions(self, batch, **kwargs):
         """
-        CUSTOMIZABLE FUNCTION
-        Takes a batch and generates predictions from the model e.g. class labels for classification models
-        Overload this function appropriately with your Dataset class's output and model generation function signature
+        CUSTOMIZABLE FUNCTION - used as a helper function for compute_metric and predict_set
+        Unpacks a batch of data and generates predictions from the model e.g. class labels for classification models.
+        Overload this function appropriately with your Dataset class's output and model generation function signature.
         """
-        # Unpack batch
-        x, y = batch
-        x, y = x.to(self.device), y.to(self.device)
+        raise NotImplementedError
 
-        # Generate predictions
-        outputs = self.model(x)
-        _, pred_labels = torch.max(F.softmax(outputs, dim=1), 1)
-        pred_labels = pred_labels.view(-1)
-
-        # Clean up
-        del x, outputs
-        # no need to del batch (deleted in the calling function)
-        torch.cuda.empty_cache()
-
-        return pred_labels, y
 
     def compute_loss(self, batch, criterion):
         """
         CUSTOMIZABLE FUNCTION
         Computes the average loss over a batch of data for a given criterion (loss function).
-        Overload this function appropriately with your Dataset class's output and model forward function signature
+        Overload this function appropriately with your Dataset class's output and model forward function signature.
         """
-        outputs, target = self.get_outputs(batch)
-        loss = criterion(outputs, target)
+        raise NotImplementedError
 
-        # Clean up
-        del outputs, target
-        # no need to del batch (deleted in the calling function)
-        torch.cuda.empty_cache()
-
-        return loss
 
     def compute_metric(self, batch, **kwargs):
         """
         CUSTOMIZABLE FUNCTION
-        Computes the average evaluation metric over a batch of data for a given criterion (loss function).
+        Computes the average evaluation metric over a batch of data.
         Overload this function appropriately with your Dataset class's output and model forward or inference function
-        signature
+        signature.
         """
-        predictions, target = self.get_predictions(batch)
-        metric = self._accuracy(predictions, target)  # can be changed to any evaluation metric, with optional kwargs
+        raise NotImplementedError
 
-        # Clean up
-        del predictions, target
-        # no need to del batch (deleted in the calling function)
-        torch.cuda.empty_cache()
-
-        return metric
-
-    def _accuracy(self, pred_labels, labels):
-        """Mean accuracy over predicted and true labels"""
-        batch_size = len(labels)
-        accuracy = torch.sum(torch.eq(pred_labels, labels)).item() / batch_size
-        return accuracy
 
     def train(self, criterion, train_loader, dev_loader=None, eval_train=False, n_epochs=1000,
               save_dir='./', save_freq=1, report_freq=0, **kwargs):
@@ -130,6 +107,7 @@ class TorchGadget():
         :param report_freq: report training approx report_freq times per epoch
         """
         # Check config
+        # torch.autograd.set_detect_anomaly(True)  # TODO DELETE
         assert self.optimizer is not None, "Optimizer required for training. Set TorchGadget.optimizer"
         if self.scheduler and not eval_train and not dev_loader:
             print("Warning: Use of scheduler without evaluating either the training or validation sets per epoch")
@@ -149,6 +127,7 @@ class TorchGadget():
         print(f"Training set batches: {len(train_loader)}\tBatch size: {train_loader.batch_size}.")
         print(f"Development set batches: {len(dev_loader)}\tBatch size: {dev_loader.batch_size}." if dev_loader \
               else "No development set provided")
+
         print(f"Beginning training at {datetime.now()}")
         if self.epoch == 0:
             with open(save_dir + "results.txt", mode='a') as f:
@@ -171,26 +150,7 @@ class TorchGadget():
         self.model.train()
         for epoch in range(self.epoch + 1, n_epochs + 1):
             # Train over epoch
-            avg_loss = 0.0  # Accumulate loss over subsets of batches for reporting
-            for i, batch in enumerate(train_loader):
-                batch_num = i + 1
-                self.optimizer.zero_grad()
-
-                self.model.to(self.device)
-                loss = self.compute_loss(batch, criterion)
-                loss.backward()
-                # nn.utils.clip_grad_norm_(self.model.parameters(), 1)
-                self.optimizer.step()
-
-                # Accumulate loss for reporting
-                avg_loss += loss.item()
-                if batch_group_size and (batch_num) % batch_group_size == 0:
-                    print(f'Epoch {epoch}, Batch {batch_num}\tTrain loss: {avg_loss / batch_group_size:.4f}\t{datetime.now()}')
-                    avg_loss = 0.0
-
-                # Cleanup
-                del batch
-                torch.cuda.empty_cache()
+            last_batch_group_loss = self.train_epoch(train_loader, criterion, epoch, batch_group_size)
 
             # Evaluate epoch
             with open(save_dir + "results.txt", mode='a') as f:
@@ -207,6 +167,8 @@ class TorchGadget():
                     self.dev_loss.append(epoch_dev_loss)
                     self.dev_metric.append(epoch_dev_metric)
                     line = line + f",{epoch_dev_loss},{epoch_dev_metric}"
+                else:
+                    epoch_dev_metric = None
                 f.write(line + "\n")
 
             # Step scheduler
@@ -216,31 +178,77 @@ class TorchGadget():
                 elif eval_train:
                     self.try_sched_step(epoch_train_loss)
                 else:
-                    self.try_sched_step(avg_loss)
+                    self.try_sched_step(last_batch_group_loss)
 
             # Save checkpoint
             if save_freq and epoch % save_freq == 0:
-                checkpoint = {
-                    'epoch': epoch,
-                    'model_state_dict': self.model.state_dict(),
-                    'optimizer_state_dict': self.optimizer.state_dict(),
-                    'scheduler_state_dict': getattr(self.scheduler, 'state_dict', lambda: None)(),
-                    'train_loss': self.train_loss,
-                    'train_metric': self.train_metric,
-                    'dev_loss': self.dev_loss,
-                    'dev_metric': self.dev_metric
-                }
-                torch.save(checkpoint, save_dir + f"checkpoint_{epoch}_{epoch_dev_metric:.4f}.pth")
+                self.save_checkpoint(epoch, epoch_dev_metric, save_dir)
 
             # Print epoch log
-            epoch_log = f'Epoch {epoch} complete.'
-            if eval_train:
-                epoch_log = epoch_log + f"\tTrain loss: {epoch_train_loss:.4f}\tTrain metric: {epoch_train_metric:.4f}"
             if dev_loader:
-                epoch_log = epoch_log + f"\tDev loss: {epoch_dev_loss:.4f}\tDev metric: {epoch_dev_metric:.4f}"
-            print(f'{epoch_log}\t{datetime.now()}')
+                self.print_epoch_log(epoch, epoch_dev_loss, epoch_dev_metric, dataset='dev')
+            elif eval_train:
+                self.print_epoch_log(epoch, epoch_train_loss, epoch_train_metric, dataset='train')
+            else:
+                self.print_epoch_log(epoch)
 
         print(f"Finished training at {datetime.now()}")
+
+
+    def train_epoch(self, train_loader, criterion, epoch_num=1, batch_group_size=0):
+        """
+        TODO
+        """
+        # torch.autograd.set_detect_anomaly(True)
+
+        avg_loss = 0.0  # Accumulate loss over subsets of batches for reporting
+        for i, batch in enumerate(train_loader):
+            batch_num = i + 1
+            self.optimizer.zero_grad()
+
+            loss = self.compute_loss(batch, criterion)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+            self.optimizer.step()
+
+            # Accumulate loss for reporting
+            avg_loss += loss.item()
+            if batch_group_size and (batch_num) % batch_group_size == 0:
+                print(f'Epoch {epoch_num}, Batch {batch_num}\tTrain loss: {avg_loss / batch_group_size:.4f}\t{datetime.now()}')
+                avg_loss = 0.0
+
+            # Cleanup
+            del batch
+            torch.cuda.empty_cache()
+
+        return avg_loss
+
+
+    def save_checkpoint(self, epoch_num, epoch_dev_metric, save_dir):
+        """Saves a training checkpoint"""
+        checkpoint = {
+            'epoch': epoch_num,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': getattr(self.scheduler, 'state_dict', lambda: None)(),
+            'train_loss': self.train_loss,
+            'train_metric': self.train_metric,
+            'dev_loss': self.dev_loss,
+            'dev_metric': self.dev_metric
+        }
+        if epoch_dev_metric:
+            torch.save(checkpoint, save_dir + f"checkpoint_{epoch_num}_{epoch_dev_metric:.4f}.pth")
+        else:
+            torch.save(checkpoint, save_dir + f"checkpoint_{epoch_num}.pth")
+
+
+    def print_epoch_log(self, epoch_num, loss=None, metric=None, dataset='dev'):
+        """Prints a log of a training epoch at its completion"""
+        epoch_log = f'Epoch {epoch_num} complete.'
+        if loss is not None and metric is not None:
+            epoch_log += f'\t{dataset} loss: {loss:.4f}\t{dataset} metric: {metric:.4f}'
+        print(f'{epoch_log}\t{datetime.now()}')
+
 
     def eval_set(self, data_loader, compute_fn=None, **kwargs):
         """
@@ -276,12 +284,13 @@ class TorchGadget():
 
         return accum / batch_count
 
+
     def predict_set(self, data_loader, **kwargs):
         """
         BOILERPLATE FUNCTION
         Generates the predictions of the model on a given dataset
         :param data_loader: A dataloader for the data over which to evaluate
-        :param kwargs: any kwargs required for prediction
+        :param kwargs: kwargs for the get_predictions method, if any
         :return: Concatenated predictions of the same type as returned by self.get_predictions
         """
         self.model.eval()
@@ -313,6 +322,33 @@ class TorchGadget():
 
         return predictions_set
 
+
+    def training_plot(self, plot_loss=True, plot_metric=True):
+        if plot_loss and plot_metric:
+            fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, sharey=False)
+        else:
+            fig, ax1 = plt.subplots()
+        plt.title('Training plot')
+        plt.xlabel('Epoch')
+
+        if plot_loss:
+            if self.train_loss:
+                ax1.plot(range(1, self.epoch + 1), self.train_loss, 'b-', label='Training loss')
+            if self.dev_loss:
+                ax1.plot(range(1, self.epoch + 1), self.dev_loss, 'g-', label='Development loss')
+            ax1.set_ylabel('Loss')
+            ax1.legend()
+        if plot_metric:
+            ax = ax2 if plot_loss else ax1
+            if self.train_metric:
+                ax.plot(range(1, self.epoch + 1), self.train_metric, 'b-', label='Training metric')
+            if self.dev_metric:
+                ax.plot(range(1, self.epoch + 1), self.dev_metric, 'g-', label='Development metric')
+            ax.set_ylabel('Metric')
+            ax.legend()
+        plt.show()
+
+
     def load_checkpoint(self, checkpoint_path=''):
         """Loads a checkpoint for the model, epoch number and optimizer if provided"""
         # Try loading checkpoint and keep asking for valid checkpoint paths upon failure.
@@ -322,7 +358,7 @@ class TorchGadget():
                 self.epoch = 0
                 done = True
             try:
-                checkpoint = torch.load(checkpoint_path)
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
                 self.model.load_state_dict(checkpoint['model_state_dict'])
                 if self.optimizer:
                     self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -350,6 +386,7 @@ class TorchGadget():
             self.scheduler.step(metrics=metrics)
         except TypeError:
             self.scheduler.step()
+
 
     def check_save_dir(self, save_dir):
         """Checks that the provided save directory exists and warns the user if it is not empty"""
@@ -400,6 +437,7 @@ class TorchGadget():
 
         return save_dir
 
+
     def get_device(self):
         """Gets the preferred torch.device and warns the user if it is cpu"""
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -411,3 +449,85 @@ class TorchGadget():
             if use_cpu == 'n':
                 sys.exit()
         return device
+
+
+class ClassificationGadget(TorchGadget):
+    def __init__(self, *args, **kwargs):
+        super(ClassificationGadget, self).__init__(*args, **kwargs)
+
+    def get_outputs(self, batch):
+        """
+        Takes a batch and runs it through the model's forward method to get outputs.
+        Overload this function appropriately with your Dataset class's output and model forward function signature
+        """
+        # Unpack batch
+        x, y = batch
+        x, y = x.to(self.device), y.to(self.device)
+
+        # Compute outputs
+        outputs = self.model(x)
+
+        # Clean up
+        del x
+        # no need to del batch (deleted in the calling function)
+        torch.cuda.empty_cache()
+
+        return outputs, y
+
+    def get_predictions(self, batch, **kwargs):
+        """
+        Takes a batch and generates predictions from the model e.g. class labels for classification models
+        Overload this function appropriately with your Dataset class's output and model generation function signature
+        """
+        # Unpack batch
+        x, y = batch
+        x, y = x.to(self.device), y.to(self.device)
+
+        # Generate predictions
+        outputs = self.model(x)
+        _, pred_labels = outputs.max(dim=1)
+        pred_labels = pred_labels.view(-1)
+
+        # Clean up
+        del x, outputs
+        # no need to del batch (deleted in the calling function)
+        torch.cuda.empty_cache()
+
+        return pred_labels, y
+
+    def compute_loss(self, batch, criterion):
+        """
+        Computes the average loss over a batch of data for a given criterion (loss function).
+        Overload this function appropriately with your Dataset class's output and model forward function signature
+        """
+        outputs, target = self.get_outputs(batch)
+        loss = criterion(outputs, target)
+
+        # Clean up
+        del outputs, target
+        # no need to del batch (deleted in the calling function)
+        torch.cuda.empty_cache()
+
+        return loss
+
+    def compute_metric(self, batch, **kwargs):
+        """
+        Computes the average evaluation metric over a batch of data.
+        Overload this function appropriately with your Dataset class's output and model forward or inference function
+        signature
+        """
+        predictions, target = self.get_predictions(batch)
+        metric = self._accuracy(predictions, target)  # can be changed to any evaluation metric, with optional kwargs
+
+        # Clean up
+        del predictions, target
+        # no need to del batch (deleted in the calling function)
+        torch.cuda.empty_cache()
+
+        return metric
+
+    def _accuracy(self, pred_labels, labels):
+        """Mean accuracy over predicted and true labels"""
+        batch_size = len(labels)
+        accuracy = torch.sum(torch.eq(pred_labels, labels)).item() / batch_size
+        return accuracy

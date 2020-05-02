@@ -1,6 +1,6 @@
 # boilertorch
 ## Boilerplate code for PyTorch projects
-boilertorch contains boilerplate / template code for PyTorch projects provided by the `TorchGadget` class
+boilertorch contains boilerplate / template code for PyTorch projects provided by the `TorchGadget` abstract class
 
 `TorchGadget` features:
 - Complete built-in pipeline for classification tasks
@@ -24,16 +24,17 @@ You can focus on the fun part!
 - Extend the `TorchGadget` class with custom code if your model is not a classification model
 
 We take care of the rest!
-- Instantiate a `TorchGadget` object
-- Train your model using `TorchGadget.train`, loading a checkpoint if desired
-- Generate predictions from your model using `TorchGadget.predict_set`
+- Instantiate a `ClassificationGadget` object (or your own custom extension of the `TorchGadget` class)
+- Train your model using `ClassificationGadget.train`, loading a checkpoint if desired
+- Evaluate your model using `ClassificationGadget.eval_set`
+- Generate predictions from your model using `ClassificationGadget.predict_set`
 
 ### Built-in classification pipeline
 The built-in pipeline assumes your model is a binary or multi-class classification model that outputs softmax logits. It generates prediction by taking the maximum output logit and the built-in metric is accuracy.
 
 Example:
 ```
-from boilertorch import TorchGadget
+from boilertorch import ClassificationGadget
 
 train_loader = Dataloader(...)
 dev_loader = Dataloader(...)
@@ -45,7 +46,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=...)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, ...)  # optional
 checkpt_path = 'path/checkpt.pt'  # optional
 
-gadget = TorchGagdet(model, optimizer, scheduler, checkpoint=checkpt_path)
+gadget = ClassificationGadget(model, optimizer, scheduler, checkpoint=checkpt_path)
 gadget.train(criterion, train_loader, dev_loader, n_epochs=50, save_dir='./')
 dev_accuracy = gadget.eval_set(dev_loader)  # evaluate accuracy over the dev set
 predictions = gadget.predict_set(test_loader)  # predict labels for the test set
@@ -71,5 +72,5 @@ Most loss functions already follow this signature e.g. `nn.CrossEntropyLoss`, `n
 
 
 ### Customizing model prediction and evaluation metric
-- If your model is not a binary or multi-class classification model that outputs softmax logits, overload or edit the `TorchGagdet.get_predictions` method to put a batch from the Dataloader through your model and generate predictions. `Torchgadget` uses this for both evaluation and blind prediction. For blind prediction, `TorchGagdet.predict_set` will take care of concatenating the outputs of the batches for you if your `TorchGagdet.get_predictions` method returns the predictions as a `torch.Tensor`, `numpy.ndarray` or Python `list`.
+- If your model is not a binary or multi-class classification model that outputs softmax logits, overload or edit the `TorchGadget.get_predictions` method to put a batch from the Dataloader through your model and generate predictions. `Torchgadget` uses this for both evaluation and blind prediction. For blind prediction, `TorchGadget.predict_set` will take care of concatenating the outputs of the batches for you if your `TorchGadget.get_predictions` method returns the predictions as a `torch.Tensor`, `numpy.ndarray` or Python `list`.
 - If your evaluation metric is not classification accuracy, overload or edit the `TorchGagdet.compute_metric` method to compute your evaluation metric with the outputs or predictions from your model and the targets.
