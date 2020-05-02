@@ -1,5 +1,5 @@
 # boilertorch
-## Boilerplate code for PyTorch projects
+## Template / boilerplate code for PyTorch projects
 boilertorch contains boilerplate / template code for PyTorch projects provided by the `TorchGadget` abstract class
 
 `TorchGadget` features:
@@ -19,11 +19,12 @@ boilertorch contains boilerplate / template code for PyTorch projects provided b
 ## Instructions:
 You can focus on the fun part!
 - Write your own PyTorch `nn.Module` model class and initialize the model parameters yourself
-- Write your own `torch.utils.data.Dataset` class. (When instantiating blind test data without given target outputs, use dummy outputs instead.)
-- Batch your data using `torch.utils.data.Dataloader` 
-- Extend the `TorchGadget` class with custom code if your model is not a classification model
+- Extend our `gadgets.TorchGadget` class with custom code if your model is not a classification model
 
 We take care of the rest!
+- Use our handy `data.FixedDataset` class to create your datasets or extend your own `torch.utils.data.Dataset` class.
+  - When instantiating blind test data without given target outputs, use dummy outputs instead. Our `FixedDataset` class automatically does this for you if you do not provide target values `y`.
+- Put your datasets into `torch.utils.data.Dataloader` for batching
 - Instantiate a `ClassificationGadget` object (or your own custom extension of the `TorchGadget` class)
 - Train your model using `ClassificationGadget.train`, loading a checkpoint if desired
 - Evaluate your model using `ClassificationGadget.eval_set`
