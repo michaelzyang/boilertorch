@@ -18,7 +18,7 @@ boilertorch contains boilerplate / template code for PyTorch projects provided b
 
 ## Instructions:
 You can focus on the fun part!
-- Write your own PyTorch `nn.Module` model class and initialize the model parameters yourself
+- Write your own PyTorch `nn.Module` model class, or use one of ours such as `models.MLP`.
 - Extend our `gadgets.TorchGadget` class with custom code if your model is not a classification model
 
 We take care of the rest!
